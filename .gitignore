@@ -1,0 +1,14 @@
+# dependencies & build output
+node_modules/
+dist/
+
+# logs & OS cruft
+*.log
+.DS_Store
+
+# local env / secrets
+.env
+.env.*
+
+# NOTE: bun.lock IS tracked on purpose (bunfig.toml sets install.exact=true)
+# for reproducible installs. Do not ignore it.

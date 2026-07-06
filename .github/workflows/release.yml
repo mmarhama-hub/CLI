@@ -1,0 +1,56 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install --frozen-lockfile || bun install
+        working-directory: packages/cli
+      - run: bunx --bun tsc --noEmit
+        working-directory: packages/cli
+      - run: bun test
+        working-directory: packages/cli
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: bun-linux-x64
+            asset: plugsky-linux-x64
+          - target: bun-linux-arm64
+            asset: plugsky-linux-arm64
+          - target: bun-darwin-x64
+            asset: plugsky-darwin-x64
+          - target: bun-darwin-arm64
+            asset: plugsky-darwin-arm64
+          - target: bun-windows-x64
+            asset: plugsky-windows-x64.exe
+    defaults:
+      run:
+        working-directory: packages/cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install --frozen-lockfile || bun install
+      - name: Compile
+        run: |
+          bun build ./src/index.ts \
+            --compile --minify --sourcemap \
+            --target=${{ matrix.target }} \
+            --outfile dist/${{ matrix.asset }}
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/cli/dist/${{ matrix.asset }}
