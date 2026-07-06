@@ -26,9 +26,16 @@ function Tui() {
   const [lines, setLines] = useState<Line[]>([{ role: "system", text: `Plugsky · ${model} · ${mode}. Type /help for commands.` }])
   const historyRef = useRef<ChatMessage[]>([{ role: "system", content: buildSystemPrompt(ctx.cwd) }])
   const sessionRef = useRef<string>(createSession("tui session", ctx.cwd))
+  const registryRef = useRef(defaultRegistry())
   const [confirm, setConfirm] = useState<{ summary: string; resolve: (ok: boolean) => void } | null>(null)
 
   const submitRef = useRef<((value: string) => void) | null>(null)
+
+  React.useEffect(() => {
+    connectMcpServers(ctx.config).then((conns) => {
+      for (const conn of conns) for (const t of conn.tools) registryRef.current.register(t)
+    }).catch(() => {})
+  }, [])
 
   useInput((input, key) => {
     if (confirm) {
@@ -59,10 +66,21 @@ function Tui() {
         push({ role: "system", text: sess.length ? sess.map((s) => `${s.id.slice(0, 8)}  ${s.title}`).join("\n") : "(no sessions)" })
         return true
       }
-      case "/usage": push({ role: "system", text: "Usage tracking via: plugsky usage (terminal)" }); return true
+      case "/usage": {
+        const tools = registryRef.current.list()
+        const mcpTools = tools.filter((t) => t.name.startsWith("mcp__"))
+        push({ role: "system", text: `Session active · ${historyRef.current.length} messages · ${mcpTools.length} MCP tools loaded` })
+        return true
+      }
       case "/mcp": {
-        const names = Object.keys(ctx.config.mcpServers)
-        push({ role: "system", text: names.length ? names.join("\n") : "No MCP servers configured." })
+        const tools = registryRef.current.list()
+        const mcpTools = tools.filter((t) => t.name.startsWith("mcp__"))
+        if (mcpTools.length) {
+          push({ role: "system", text: mcpTools.map((t) => `• ${t.name}: ${t.description}`).join("\n") })
+        } else {
+          const names = Object.keys(ctx.config.mcpServers)
+          push({ role: "system", text: names.length ? `Configured: ${names.join(", ")} (connecting on first message)` : "No MCP servers configured." })
+        }
         return true
       }
       case "/help": push({ role: "system", text: SLASH.map((s) => `${s.name}  ${s.description}`).join("\n") }); return true
@@ -92,10 +110,7 @@ function Tui() {
         }
       }
 
-      const registry = defaultRegistry()
-      const mcpConns = await connectMcpServers(ctx.config).catch(() => [])
-      for (const conn of mcpConns) for (const t of conn.tools) registry.register(t)
-      const orch = new Orchestrator(ctx.client, registry, ctx.config.allowedTools)
+      const orch = new Orchestrator(ctx.client, registryRef.current, ctx.config.allowedTools)
 
       const msgCount = historyRef.current.length
       const { messages } = await orch.run(
@@ -119,7 +134,7 @@ function Tui() {
         },
       )
       historyRef.current = messages
-      for (const m of messages.slice(msgCount + 1)) appendMessage(sessionRef.current, m)
+      for (const m of messages.slice(msgCount)) appendMessage(sessionRef.current, m)
     } finally {
       setBusy(false)
     }
