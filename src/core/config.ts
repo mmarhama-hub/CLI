@@ -9,7 +9,7 @@ export const ConfigSchema = z.object({
   approvalMode: z.enum(["suggest", "auto-edit", "full-auto"]).default("suggest"),
   maxTurns: z.number().int().positive().default(25),
   temperature: z.number().min(0).max(2).default(0.2),
-  theme: z.enum(["dark", "light", "mono"]).default("dark"),
+  theme: z.string().default("dark"),
   showUsage: z.boolean().default(true),
   telemetry: z.boolean().default(false),
   mcpServers: z
@@ -24,7 +24,7 @@ export const ConfigSchema = z.object({
     )
     .default({}),
   allowedTools: z.array(z.string()).default([]),
-})
+}).passthrough()
 
 export type Config = z.infer<typeof ConfigSchema>
 
