@@ -23,7 +23,7 @@ if (compile) {
     ["bun-windows-x64", "plugsky-windows-x64.exe"],
   ] as const
   for (const [target, out] of targets) {
-    await $`bun build src/index.ts --compile --target=${target} --outfile dist/bin/${out} --minify`
-    console.log(`✓ compiled dist/bin/${out}`)
+    await $`bun build src/index.ts --compile --target=${target} --outfile dist/${out} --minify`
+    console.log(`✓ compiled dist/${out}`)
   }
 }

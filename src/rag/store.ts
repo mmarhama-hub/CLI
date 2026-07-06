@@ -1,10 +1,11 @@
 import { Database } from "bun:sqlite"
 import { join } from "node:path"
+import { existsSync } from "node:fs"
 import { paths } from "../util/paths"
 
 export interface Chunk { id?: number; path: string; start: number; text: string; embedding: number[] }
 
-function projectDbPath(cwd: string): string {
+export function projectDbPath(cwd: string): string {
   const safe = cwd.replace(/[^a-zA-Z0-9]/g, "_")
   return join(paths.ragDir, `${safe}.db`)
 }
@@ -32,6 +33,13 @@ export class RagStore {
       .map((c) => ({ c, score: cosine(query, c.embedding) }))
       .sort((a, b) => b.score - a.score).slice(0, k).map((x) => x.c)
   }
+}
+
+export function hasIndex(cwd: string): boolean {
+  const dbPath = projectDbPath(cwd)
+  if (!existsSync(dbPath)) return false
+  const store = new RagStore(cwd)
+  return store.all().length > 0
 }
 
 function cosine(a: number[], b: number[]): number {

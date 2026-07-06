@@ -8,7 +8,9 @@ import type { ChatMessage } from "../core/client"
 import type { ToolContext } from "../tools/types"
 import { confirmTTY } from "../util/spinner"
 import { retrieveContext } from "../rag/indexer"
+import { hasIndex } from "../rag/store"
 import { resolveModel } from "../util/model"
+import { connectMcpServers } from "../mcp/client"
 
 export async function runCommand(argv: string[]): Promise<void> {
   const cwd = flagVal(argv, "--cwd") ?? process.cwd()
@@ -23,10 +25,11 @@ export async function runCommand(argv: string[]): Promise<void> {
   const sessionId = resume?.id ?? createSession(task.slice(0, 60), cwd)
 
   const systemContent = buildSystemPrompt(cwd)
-  const ragContext = await retrieveContext(ctx.client as never, cwd, task).catch(() => "")
-  const enhancedSystem = ragContext
-    ? `${systemContent}\n\nRelevant code context:\n${ragContext}`
-    : systemContent
+  let enhancedSystem = systemContent
+  if (hasIndex(cwd)) {
+    const ragContext = await retrieveContext(ctx.client as never, cwd, task).catch(() => "")
+    if (ragContext) enhancedSystem = `${systemContent}\n\nRelevant code context:\n${ragContext}`
+  }
 
   const baseHistory: ChatMessage[] = resume ? loadMessages(sessionId) : []
   const hasSystem = baseHistory.length > 0 && baseHistory[0]?.role === "system"
@@ -44,7 +47,11 @@ export async function runCommand(argv: string[]): Promise<void> {
     },
   }
 
-  const orch = new Orchestrator(ctx.client, defaultRegistry(), ctx.config.allowedTools)
+  const registry = defaultRegistry()
+  const mcpConns = await connectMcpServers(ctx.config).catch(() => [])
+  for (const conn of mcpConns) for (const t of conn.tools) registry.register(t)
+
+  const orch = new Orchestrator(ctx.client, registry, ctx.config.allowedTools)
   process.stdout.write(pc.dim(`▸ model: ${model} · mode: ${approvalMode}\n\n`))
 
   const { finalText, messages } = await orch.run(

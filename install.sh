@@ -2,7 +2,7 @@
 # Plugsky CLI installer:  curl -fsSL https://plugsky.com/install | sh
 set -eu
 
-REPO="coinplannet/plugskyCLI"
+REPO="mmarhama-hub/CLI"
 BIN="plugsky"
 INSTALL_DIR="${PLUGSKY_INSTALL_DIR:-$HOME/.plugsky/bin}"
 

@@ -6,11 +6,13 @@ import { buildContext } from "../context"
 import { Orchestrator } from "../agent/orchestrator"
 import { buildSystemPrompt } from "../agent/prompt"
 import { defaultRegistry } from "../tools/registry"
-import { createSession, appendMessage } from "../core/sessions"
+import { createSession, appendMessage, listSessions } from "../core/sessions"
 import type { ChatMessage } from "../core/client"
 import { SLASH } from "./slash"
 import { retrieveContext } from "../rag/indexer"
+import { hasIndex } from "../rag/store"
 import { resolveModel } from "../util/model"
+import { connectMcpServers } from "../mcp/client"
 
 interface Line { role: "user" | "assistant" | "tool" | "system"; text: string }
 
@@ -24,7 +26,6 @@ function Tui() {
   const [lines, setLines] = useState<Line[]>([{ role: "system", text: `Plugsky · ${model} · ${mode}. Type /help for commands.` }])
   const historyRef = useRef<ChatMessage[]>([{ role: "system", content: buildSystemPrompt(ctx.cwd) }])
   const sessionRef = useRef<string>(createSession("tui session", ctx.cwd))
-  const orch = useRef(new Orchestrator(ctx.client, defaultRegistry(), ctx.config.allowedTools)).current
   const [confirm, setConfirm] = useState<{ summary: string; resolve: (ok: boolean) => void } | null>(null)
 
   const submitRef = useRef<((value: string) => void) | null>(null)
@@ -46,13 +47,24 @@ function Tui() {
       return [...prev, { role: "assistant", text: delta }]
     })
 
-  const handleSlash = (cmd: string): boolean => {
+  const handleSlash = async (cmd: string): Promise<boolean> => {
     const [name, arg] = cmd.split(/\s+/, 2)
     switch (name) {
       case "/exit": exit(); return true
       case "/clear": historyRef.current = [{ role: "system", content: buildSystemPrompt(ctx.cwd) }]; setLines([{ role: "system", text: "Cleared." }]); return true
-      case "/model": if (arg) { setModel(arg as typeof model); push({ role: "system", text: `Model → ${arg}` }) } return true
+      case "/model": if (arg) { setModel(arg); push({ role: "system", text: `Model → ${arg}` }) } return true
       case "/mode": if (arg) { setMode(arg as typeof mode); push({ role: "system", text: `Mode → ${arg}` }) } return true
+      case "/sessions": {
+        const sess = listSessions(10).filter((s) => s.cwd === ctx.cwd)
+        push({ role: "system", text: sess.length ? sess.map((s) => `${s.id.slice(0, 8)}  ${s.title}`).join("\n") : "(no sessions)" })
+        return true
+      }
+      case "/usage": push({ role: "system", text: "Usage tracking via: plugsky usage (terminal)" }); return true
+      case "/mcp": {
+        const names = Object.keys(ctx.config.mcpServers)
+        push({ role: "system", text: names.length ? names.join("\n") : "No MCP servers configured." })
+        return true
+      }
       case "/help": push({ role: "system", text: SLASH.map((s) => `${s.name}  ${s.description}`).join("\n") }); return true
       default: return false
     }
@@ -62,7 +74,7 @@ function Tui() {
     const text = value.trim()
     setInput("")
     if (!text) return
-    if (text.startsWith("/") && handleSlash(text)) return
+    if (text.startsWith("/")) { await handleSlash(text); return }
     push({ role: "user", text })
     const userMsg: ChatMessage = { role: "user", content: text }
     historyRef.current.push(userMsg)
@@ -70,14 +82,22 @@ function Tui() {
     setBusy(true)
     try {
       const resolvedModel = await resolveModel(ctx.client, model, historyRef.current)
-      const ragContext = await retrieveContext(ctx.client as never, ctx.cwd, text).catch(() => "")
-      if (ragContext && historyRef.current[0]?.role === "system") {
-        const base = historyRef.current[0].content ?? ""
-        if (!base.includes("Relevant code context")) {
-          historyRef.current[0] = { role: "system", content: `${base}\n\nRelevant code context:\n${ragContext}` }
+      if (hasIndex(ctx.cwd)) {
+        const ragContext = await retrieveContext(ctx.client as never, ctx.cwd, text).catch(() => "")
+        if (ragContext && historyRef.current[0]?.role === "system") {
+          const base = historyRef.current[0].content ?? ""
+          if (!base.includes("Relevant code context")) {
+            historyRef.current[0] = { role: "system", content: `${base}\n\nRelevant code context:\n${ragContext}` }
+          }
         }
       }
 
+      const registry = defaultRegistry()
+      const mcpConns = await connectMcpServers(ctx.config).catch(() => [])
+      for (const conn of mcpConns) for (const t of conn.tools) registry.register(t)
+      const orch = new Orchestrator(ctx.client, registry, ctx.config.allowedTools)
+
+      const msgCount = historyRef.current.length
       const { messages } = await orch.run(
         {
           model: resolvedModel, messages: historyRef.current, maxTurns: ctx.config.maxTurns, temperature: ctx.config.temperature,
@@ -99,7 +119,7 @@ function Tui() {
         },
       )
       historyRef.current = messages
-      for (const m of messages.filter((mm) => mm.role !== "system")) appendMessage(sessionRef.current, m)
+      for (const m of messages.slice(msgCount + 1)) appendMessage(sessionRef.current, m)
     } finally {
       setBusy(false)
     }

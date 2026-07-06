@@ -5,9 +5,7 @@ import { paths, ensureHome } from "../util/paths"
 
 export const ConfigSchema = z.object({
   baseUrl: z.string().url().default("https://api.plugsky.com/v1"),
-  defaultModel: z
-    .enum(["plugsky-micro", "plugsky-minimax", "plugsky-pro", "plugsky-frontier", "auto"])
-    .default("auto"),
+  defaultModel: z.string().default("auto"),
   approvalMode: z.enum(["suggest", "auto-edit", "full-auto"]).default("suggest"),
   maxTurns: z.number().int().positive().default(25),
   temperature: z.number().min(0).max(2).default(0.2),
