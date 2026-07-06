@@ -170,7 +170,8 @@ export class PlugskyClient {
   }
 
   async usage(params: { start_date?: string; end_date?: string; group_by?: string } = {}) {
-    const q = new URLSearchParams(params as Record<string, string>).toString()
+    const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== ""))
+    const q = new URLSearchParams(clean as Record<string, string>).toString()
     return this.req<{ data: Array<Record<string, unknown>> }>(`/plugsky/usage?${q}`, { method: "GET", headers: this.headers() })
   }
 
