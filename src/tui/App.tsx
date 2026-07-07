@@ -284,7 +284,7 @@ function Tui() {
 
   return (
     <Box flexDirection="column" height="100%">
-      <Header model={model} mode={mode} cwd={ctx.cwd} tokens={tokens} msgCount={lines.length} busy={busy} showPanel={showPanel} onTogglePanel={() => setShowPanel((p) => !p)} agentMode={agentMode} />
+      <Header model={model} mode={mode} cwd={ctx.cwd} tokens={tokens} msgCount={lines.length} busy={busy} showPanel={showPanel} agentMode={agentMode} />
       <Box flexDirection="row" flexGrow={1}>
         {chatArea}
         <ContextPanel lines={lines} msgCount={lines.length} fileList={files} show={showPanel} />
