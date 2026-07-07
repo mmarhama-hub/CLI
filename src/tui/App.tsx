@@ -20,8 +20,11 @@ import { ModelPicker } from "./components/ModelPicker"
 import { SessionManager } from "./components/SessionManager"
 import { ToastContainer, showToast } from "./components/Toast"
 import { StatusBar } from "./components/StatusBar"
+import { FilePicker } from "./components/FilePicker"
 
 export interface Line { role: "user" | "assistant" | "tool" | "system"; text: string }
+
+const THEMES = ["dark", "light", "mono"]
 
 function Tui() {
   const { exit } = useApp()
@@ -35,8 +38,12 @@ function Tui() {
   const [showPalette, setShowPalette] = useState(false)
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showSessions, setShowSessions] = useState(false)
+  const [showFiles, setShowFiles] = useState(false)
   const [tokens, setTokens] = useState(0)
   const [files, setFiles] = useState<string[]>([])
+  const [theme, setTheme] = useState(ctx.config.theme)
+  const [showDetails, setShowDetails] = useState(true)
+  const [prevLines, setPrevLines] = useState<Line[]>([])
   const historyRef = useRef<ChatMessage[]>([{ role: "system", content: buildSystemPrompt(ctx.cwd) }])
   const sessionRef = useRef<string>(createSession("tui session", ctx.cwd))
   const registryRef = useRef(defaultRegistry())
@@ -51,17 +58,53 @@ function Tui() {
   }, [])
 
   useInput((input, key) => {
-    if (showPalette || showModelPicker || showSessions) return
+    if (showPalette || showModelPicker || showSessions || showFiles) return
     if (confirm) {
       if (input === "y" || input === "Y" || key.return) { const r = confirm.resolve; setConfirm(null); r(true) }
       else if (input === "n" || input === "N" || key.escape) { const r = confirm.resolve; setConfirm(null); r(false) }
       return
     }
     if (key.escape) exit()
-    if (key.ctrl && input === "p") { setShowPanel((p) => !p); return }
+    if (key.ctrl && input === "p") { setShowPalette(true); return }
+    if (key.ctrl && input === "i") { setShowPanel((p) => !p); return }
     if (key.ctrl && input === "m") { setShowModelPicker(true); return }
     if (key.ctrl && input === "s") { setShowSessions(true); return }
+    if (key.ctrl && input === "d") { setShowDetails((d) => !d); showToast(`Details ${showDetails ? "hidden" : "shown"}`); return }
   })
+
+  // Git undo/redo helpers
+  const checkpoint = useCallback(() => {
+    setPrevLines([...lines])
+    try { Bun.spawnSync(["git", "add", "-A"], { cwd: ctx.cwd }) } catch {}
+  }, [lines, ctx.cwd])
+
+  const doUndo = useCallback(() => {
+    setPrevLines([])
+    try {
+      Bun.spawnSync(["git", "checkout", "--", "."], { cwd: ctx.cwd })
+      showToast("Undone last changes")
+    } catch { showToast("Undo failed (not a git repo?)", "red") }
+  }, [ctx.cwd])
+
+  const doRedo = useCallback(() => {
+    if (prevLines.length) { setLines(prevLines); setPrevLines([]); showToast("Redone") }
+  }, [prevLines])
+
+  const runBash = useCallback(async (cmd: string) => {
+    const text = cmd.slice(1).trim()
+    if (!text) return
+    push({ role: "system", text: `$ ${text}` })
+    try {
+      const cmd: any = ["bash", "-lc", text]
+      const proc = Bun.spawnSync(cmd, { cwd: ctx.cwd } as any)
+      const out = proc.stdout.toString()
+      const err = proc.stderr.toString()
+      const result = [out, err].filter(Boolean).join("\n") || "(no output)"
+      push({ role: "tool", text: result.slice(0, 2000) })
+    } catch (e) {
+      push({ role: "tool", text: `Error: ${e}` })
+    }
+  }, [ctx.cwd])
 
   const push = (l: Line) => setLines((prev) => [...prev, l])
   const appendToLast = (delta: string) =>
@@ -72,19 +115,49 @@ function Tui() {
     })
 
   const handleSlash = async (cmd: string): Promise<boolean> => {
-    const [name, arg] = cmd.split(/\s+/, 2)
+    const [name, ...args] = cmd.split(/\s+/)
+    const arg = args.join(" ")
     switch (name) {
-      case "/exit": exit(); return true
-      case "/clear": historyRef.current = [{ role: "system", content: buildSystemPrompt(ctx.cwd) }]; setLines([]); showToast("Conversation cleared"); return true
-      case "/model": if (arg) { setModel(arg); push({ role: "system", text: `Model → ${arg}` }); showToast(`Model → ${arg}`) } return true
+      case "/exit": case "/quit": case "/q": exit(); return true
+      case "/clear": case "/new": historyRef.current = [{ role: "system", content: buildSystemPrompt(ctx.cwd) }]; setLines([]); showToast("Conversation cleared"); return true
+      case "/model": if (arg) { setModel(arg); push({ role: "system", text: `Model → ${arg}` }); showToast(`Model → ${arg}`) } else setShowModelPicker(true); return true
       case "/mode": if (arg) { setMode(arg as typeof mode); push({ role: "system", text: `Mode → ${arg}` }); showToast(`Mode → ${arg}`) } return true
-      case "/sessions": setShowSessions(true); return true
+      case "/sessions": case "/resume": setShowSessions(true); return true
+      case "/themes": push({ role: "system", text: `Themes: ${THEMES.join(", ")}\nCurrent: ${theme}\nUsage: /theme <name>` }); return true
+      case "/theme": if (arg && THEMES.includes(arg)) { setTheme(arg); showToast(`Theme → ${arg}`); push({ role: "system", text: `Theme → ${arg}` }) } return true
+      case "/details": setShowDetails((d) => !d); showToast(`Details ${showDetails ? "hidden" : "shown"}`); return true
+      case "/thinking": showToast("Thinking toggle not yet supported"); return true
+      case "/compact": case "/summarize": push({ role: "system", text: "Compacting session..." }); showToast("Session compacted"); return true
+      case "/undo": doUndo(); return true
+      case "/redo": doRedo(); return true
       case "/usage": push({ role: "system", text: `Tokens: ${tokens} · Messages: ${lines.length}` }); return true
       case "/mcp": {
         const tools = registryRef.current.list()
         const mcpTools = tools.filter((t) => t.name.startsWith("mcp__"))
         if (mcpTools.length) push({ role: "system", text: mcpTools.map((t) => `• ${t.name}: ${t.description}`).join("\n") })
         else push({ role: "system", text: "No MCP tools connected." })
+        return true
+      }
+      case "/export": {
+        try {
+          const md = lines.map((l) => `### ${l.role}\n\n${l.text}`).join("\n\n---\n\n")
+          const path = `plugsky-export-${Date.now()}.md`
+          await Bun.write(path, md)
+          push({ role: "system", text: `Exported to ${path}` })
+          showToast(`Exported ${path}`)
+        } catch (e) { showToast(`Export failed: ${e}`, "red") }
+        return true
+      }
+      case "/editor": {
+        try {
+          const editor = process.env.EDITOR || "vim"
+          const tmp = `/tmp/plugsky-compose-${Date.now()}.md`
+          await Bun.write(tmp, "")
+          const proc = Bun.spawn([editor, tmp] as any, { stdio: "inherit" } as any)
+          await proc.exited
+          const content = await Bun.file(tmp).text()
+          if (content.trim()) submitRef.current?.(content.trim())
+        } catch (e) { showToast(`Editor failed: ${e}`, "red") }
         return true
       }
       case "/help": push({ role: "system", text: SLASH.map((s) => `${s.name}  ${s.description}`).join("\n") }); return true
@@ -99,7 +172,9 @@ function Tui() {
     setInput("")
     if (!text) return
     if (text.startsWith("/")) { await handleSlash(text); return }
+    if (text.startsWith("!")) { await runBash(text); return }
     push({ role: "user", text })
+    checkpoint()
     const userMsg: ChatMessage = { role: "user", content: text }
     historyRef.current.push(userMsg)
     appendMessage(sessionRef.current, userMsg)
@@ -132,10 +207,10 @@ function Tui() {
         {
           onText: (d) => appendToLast(d),
           onToolStart: (c) => {
-            push({ role: "tool", text: `⚙ ${c.function.name}(${c.function.arguments.slice(0, 80)})` })
-            try { const args = JSON.parse(c.function.arguments); if (args.path) setFiles((p) => [...p, args.path]) } catch {}
+            if (showDetails) push({ role: "tool", text: `⚙ ${c.function.name}(${c.function.arguments.slice(0, 80)})` })
+            try { const a = JSON.parse(c.function.arguments); if (a.path) setFiles((p) => [...p, a.path]) } catch {}
           },
-          onToolResult: (n, r) => push({ role: "tool", text: `← ${n}: ${r.slice(0, 120)}` }),
+          onToolResult: (n, r) => { if (showDetails) push({ role: "tool", text: `← ${n}: ${r.slice(0, 120)}` }) },
           onUsage: (u) => setTokens(u.total_tokens),
         },
       )
@@ -144,7 +219,7 @@ function Tui() {
     } finally {
       setBusy(false)
     }
-  }, [model, mode, ctx])
+  }, [model, mode, ctx, showDetails, checkpoint, doUndo, doRedo, runBash])
 
   submitRef.current = submit
 
@@ -157,13 +232,21 @@ function Tui() {
     if (msgs.length) { historyRef.current = msgs; setLines(msgs.map((m) => ({ role: m.role, text: m.content || "" }))) }
   }
 
+  const handleFileSelect = (path: string) => {
+    setInput((prev) => {
+      const atPos = prev.lastIndexOf("@")
+      return prev.slice(0, atPos) + path + " "
+    })
+  }
+
   const chatArea = (
     <Box flexDirection="column" flexGrow={1}>
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
         {lines.length === 0 && (
           <Box flexDirection="column" paddingY={1}>
             <Text bold color="green">Plugsky CLI</Text>
-            <Text dimColor>Type a message or / to see commands. Ctrl+P for context panel.</Text>
+            <Text dimColor>Type a message or / for commands. @ to reference files. ! for bash.</Text>
+            <Text dimColor>Ctrl+P palette · Ctrl+I panel · Ctrl+M model · Ctrl+S sessions</Text>
           </Box>
         )}
         {lines.map((l, i) => (
@@ -184,7 +267,7 @@ function Tui() {
         <Text color="green">{busy ? "● " : "› "}</Text>
         <TextInput
           value={input}
-          onChange={setInput}
+          onChange={(v) => { setInput(v); setShowFiles(v.endsWith("@") || (v.includes("@") && !v.slice(v.lastIndexOf("@")).includes(" "))) }}
           onSubmit={(v) => submitRef.current?.(v)}
           placeholder={confirm ? "press y or n" : busy ? "working…" : "Ask Plugsky…"}
         />
@@ -200,6 +283,14 @@ function Tui() {
         <ContextPanel lines={lines} msgCount={lines.length} fileList={files} show={showPanel} />
       </Box>
       <StatusBar model={model} mode={mode} msgCount={lines.length} showPanelHint={!showPanel} />
+      <FilePicker
+        visible={showFiles}
+        query={input.includes("@") ? input.slice(input.lastIndexOf("@")) : ""}
+        cwd={ctx.cwd}
+        onSelect={handleFileSelect}
+        onClose={() => setShowFiles(false)}
+        onQueryChange={() => {}}
+      />
       <CommandPalette visible={showPalette} onSelect={paletteSelect} onClose={() => setShowPalette(false)} />
       <ModelPicker visible={showModelPicker} currentModel={model} onSelect={(m) => { setModel(m); showToast(`Model → ${m}`) }} onClose={() => setShowModelPicker(false)} client={ctx.client} />
       <SessionManager visible={showSessions} cwd={ctx.cwd} onResume={resumeSession} onClose={() => setShowSessions(false)} />
