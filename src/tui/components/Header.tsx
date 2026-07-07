@@ -4,9 +4,9 @@ import pc from "picocolors"
 import type { Ctx } from "../../context"
 
 export function Header({
-  model, mode, cwd, tokens, msgCount, busy, showPanel, onTogglePanel,
+  model, mode, cwd, tokens, msgCount, busy, showPanel, onTogglePanel, agentMode,
 }: {
-  model: string; mode: string; cwd: string; tokens: number; msgCount: number; busy: boolean; showPanel: boolean; onTogglePanel: () => void
+  model: string; mode: string; cwd: string; tokens: number; msgCount: number; busy: boolean; showPanel: boolean; onTogglePanel: () => void; agentMode: string
 }) {
   const modeColor = mode === "full-auto" ? "red" : mode === "auto-edit" ? "blue" : "yellow"
   return (
@@ -17,6 +17,8 @@ export function Header({
         <Text color="cyan">{model}</Text>
         <Text dimColor>|</Text>
         <Text color={modeColor as any}>{mode}</Text>
+        <Text dimColor>|</Text>
+        <Text bold color={agentMode === "plan" ? "yellow" : "green"}>{agentMode === "plan" ? "PLAN" : "BUILD"}</Text>
       </Box>
       <Box gap={2}>
         <Text dimColor>{tokens > 0 ? `${tokens} tok` : ""}</Text>

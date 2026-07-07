@@ -44,6 +44,7 @@ function Tui() {
   const [theme, setTheme] = useState(ctx.config.theme)
   const [showDetails, setShowDetails] = useState(true)
   const [prevLines, setPrevLines] = useState<Line[]>([])
+  const [agentMode, setAgentMode] = useState<"build" | "plan">("build")
   const historyRef = useRef<ChatMessage[]>([{ role: "system", content: buildSystemPrompt(ctx.cwd) }])
   const sessionRef = useRef<string>(createSession("tui session", ctx.cwd))
   const registryRef = useRef(defaultRegistry())
@@ -70,6 +71,7 @@ function Tui() {
     if (key.ctrl && input === "m") { setShowModelPicker(true); return }
     if (key.ctrl && input === "s") { setShowSessions(true); return }
     if (key.ctrl && input === "d") { setShowDetails((d) => !d); showToast(`Details ${showDetails ? "hidden" : "shown"}`); return }
+    if (key.tab && !input) { setAgentMode((m) => m === "build" ? "plan" : "build"); showToast(`Mode: ${agentMode === "build" ? "plan" : "build"}`); return }
   })
 
   // Git undo/redo helpers
@@ -126,6 +128,8 @@ function Tui() {
       case "/themes": push({ role: "system", text: `Themes: ${THEMES.join(", ")}\nCurrent: ${theme}\nUsage: /theme <name>` }); return true
       case "/theme": if (arg && THEMES.includes(arg)) { setTheme(arg); showToast(`Theme → ${arg}`); push({ role: "system", text: `Theme → ${arg}` }) } return true
       case "/details": setShowDetails((d) => !d); showToast(`Details ${showDetails ? "hidden" : "shown"}`); return true
+      case "/plan": setAgentMode("plan"); showToast("Plan mode — no file changes"); push({ role: "system", text: "Plan mode: I'll explain what to do without making changes." }); return true
+      case "/build": setAgentMode("build"); showToast("Build mode — ready to edit"); push({ role: "system", text: "Build mode: I'll make changes to the codebase." }); return true
       case "/thinking": showToast("Thinking toggle not yet supported"); return true
       case "/compact": case "/summarize": push({ role: "system", text: "Compacting session..." }); showToast("Session compacted"); return true
       case "/undo": doUndo(); return true
@@ -180,6 +184,8 @@ function Tui() {
     appendMessage(sessionRef.current, userMsg)
     setBusy(true)
     try {
+      const planMsg: ChatMessage | null = agentMode === "plan" ? { role: "system", content: "PLAN MODE: Do NOT make any file edits or changes. Only explain what changes would be needed and how you would approach them. Do not call write_file, edit_file, or bash tools that modify files." } : null
+      if (planMsg) historyRef.current.push(planMsg)
       const resolvedModel = await resolveModel(ctx.client, model, historyRef.current)
       if (hasIndex(ctx.cwd)) {
         const ragContext = await retrieveContext(ctx.client as never, ctx.cwd, text).catch(() => "")
@@ -245,8 +251,9 @@ function Tui() {
         {lines.length === 0 && (
           <Box flexDirection="column" paddingY={1}>
             <Text bold color="green">Plugsky CLI</Text>
-            <Text dimColor>Type a message or / for commands. @ to reference files. ! for bash.</Text>
-            <Text dimColor>Ctrl+P palette · Ctrl+I panel · Ctrl+M model · Ctrl+S sessions</Text>
+            <Text dimColor>Tab to toggle: <Text bold color="cyan">{agentMode === "build" ? "Build mode" : "Plan mode"}</Text></Text>
+            <Text dimColor>@ file · ! bash · / commands · Ctrl+P palette · Ctrl+I panel</Text>
+            <Text dimColor>Ctrl+M model · Ctrl+S sessions · Ctrl+D details</Text>
           </Box>
         )}
         {lines.map((l, i) => (
@@ -277,12 +284,12 @@ function Tui() {
 
   return (
     <Box flexDirection="column" height="100%">
-      <Header model={model} mode={mode} cwd={ctx.cwd} tokens={tokens} msgCount={lines.length} busy={busy} showPanel={showPanel} onTogglePanel={() => setShowPanel((p) => !p)} />
+      <Header model={model} mode={mode} cwd={ctx.cwd} tokens={tokens} msgCount={lines.length} busy={busy} showPanel={showPanel} onTogglePanel={() => setShowPanel((p) => !p)} agentMode={agentMode} />
       <Box flexDirection="row" flexGrow={1}>
         {chatArea}
         <ContextPanel lines={lines} msgCount={lines.length} fileList={files} show={showPanel} />
       </Box>
-      <StatusBar model={model} mode={mode} msgCount={lines.length} showPanelHint={!showPanel} />
+      <StatusBar model={model} mode={mode} msgCount={lines.length} showPanelHint={!showPanel} agentMode={agentMode} />
       <FilePicker
         visible={showFiles}
         query={input.includes("@") ? input.slice(input.lastIndexOf("@")) : ""}

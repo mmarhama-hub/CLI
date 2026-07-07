@@ -8,6 +8,8 @@ export const SLASH: SlashCommand[] = [
   { name: "/redo", description: "Redo previously undone changes" },
   { name: "/compact", description: "Compact/summarize the session" },
   { name: "/details", description: "Toggle tool execution details" },
+  { name: "/plan", description: "Switch to plan mode (no changes, just explanation)" },
+  { name: "/build", description: "Switch to build mode (can edit files)" },
   { name: "/themes", description: "List available themes" },
   { name: "/export", description: "Export conversation to markdown file" },
   { name: "/editor", description: "Open external editor to compose message" },
